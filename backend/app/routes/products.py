@@ -3,8 +3,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.product import Product
 from app.schemas.product import ProductOut
-from app.services.color import hex_to_rgb, hsl_color_distance
-from typing import Optional
+from app.services.color import hex_to_rgb, hsl_color_distance, rgb_to_hsl
 
 router = APIRouter()
 
@@ -27,7 +26,19 @@ PALETTE = {
     "pink":      "#e06890",
 }
 
-MAX_COLOR_DISTANCE = 60
+MAX_COLOR_DISTANCE = 80
+
+
+def palette_assignment_distance(rgb1: tuple, rgb2: tuple) -> float:
+    h1, s1, l1 = rgb_to_hsl(rgb1)
+    h2, s2, l2 = rgb_to_hsl(rgb2)
+
+    hue_diff = min(abs(h1 - h2), 360 - abs(h1 - h2))
+
+    if s1 < 15:
+        return (s1 - s2) ** 2 + (l1 - l2) ** 2
+
+    return (hue_diff * 3) ** 2 + (s1 - s2) ** 2 * 0.5
 
 
 @router.get("/color", response_model=list[ProductOut])
@@ -39,13 +50,12 @@ def get_products_by_color(
     if not target_rgb:
         return []
 
-    # find closest palette color to selected hex
     best_palette = None
     best_dist = float('inf')
     for name, palette_hex in PALETTE.items():
         palette_rgb = hex_to_rgb(palette_hex)
         if palette_rgb:
-            dist = hsl_color_distance(target_rgb, palette_rgb)
+            dist = palette_assignment_distance(target_rgb, palette_rgb)
             if dist < best_dist:
                 best_dist = dist
                 best_palette = name
@@ -53,18 +63,15 @@ def get_products_by_color(
     if not best_palette:
         return []
 
-    # get products in that palette bucket
     all_products = db.query(Product).filter(
         Product.palette_colors.isnot(None),
         Product.palette_colors.contains(best_palette)
     ).all()
 
-    # sort by extracted hex distance if available, fall back to palette hex
     scored = []
     for product in all_products:
-        product_hex = product.colour_hex  # use extracted hex only
+        product_hex = product.colour_hex
         if not product_hex:
-            # no extracted hex yet — put at end
             scored.append((999, product))
             continue
         product_rgb = hex_to_rgb(product_hex)
@@ -87,19 +94,16 @@ def update_product_color(
     product = db.query(Product).filter(Product.id == product_id).first()
     if product:
         product.colour_hex = hex
-        
-        # reassign palette based on extracted hex
         rgb = hex_to_rgb(hex)
         if rgb:
             scored = []
             for name, palette_hex in PALETTE.items():
                 palette_rgb = hex_to_rgb(palette_hex)
                 if palette_rgb:
-                    dist = hsl_color_distance(rgb, palette_rgb)
+                    dist = palette_assignment_distance(rgb, palette_rgb)
                     scored.append((dist, name))
             scored.sort(key=lambda x: x[0])
             if scored:
                 product.palette_colors = scored[0][1]
-        
         db.commit()
     return {"status": "ok"}

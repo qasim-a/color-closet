@@ -6,8 +6,6 @@ const api = axios.create({
 })
 
 export const searchByColor = async (hex: string): Promise<Product[]> => {
-  const res = await api.get('/api/products/color', {
-    params: { hex }
-  })
+  const res = await api.get('/api/products/color', { params: { hex } })
   return res.data
 }

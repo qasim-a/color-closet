@@ -6,9 +6,10 @@ from io import BytesIO
 from PIL import Image
 import numpy as np
 from sklearn.cluster import KMeans
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.database import SessionLocal
 from app.models.product import Product
-from app.services.color import hex_to_rgb, hsl_color_distance
+from app.services.color import hex_to_rgb, hsl_color_distance, rgb_to_hsl
 
 PALETTE = {
     "black":     "#141414",
@@ -30,20 +31,48 @@ PALETTE = {
 }
 
 
+def palette_assignment_distance(rgb1: tuple, rgb2: tuple) -> float:
+    h1, s1, l1 = rgb_to_hsl(rgb1)
+    h2, s2, l2 = rgb_to_hsl(rgb2)
+
+    hue_diff = min(abs(h1 - h2), 360 - abs(h1 - h2))
+
+    # for very desaturated colors — hue is meaningless
+    if s1 < 15:
+        return (s1 - s2) ** 2 + (l1 - l2) ** 2
+
+    # hue dominates, saturation secondary, lightness barely matters
+    return (hue_diff * 3) ** 2 + (s1 - s2) ** 2 * 0.5
+
+
+def assign_palette(hex_color: str) -> str | None:
+    rgb = hex_to_rgb(hex_color)
+    if not rgb:
+        return None
+
+    scored = []
+    for name, palette_hex in PALETTE.items():
+        palette_rgb = hex_to_rgb(palette_hex)
+        if palette_rgb:
+            dist = palette_assignment_distance(rgb, palette_rgb)
+            scored.append((dist, name))
+
+    scored.sort(key=lambda x: x[0])
+    return scored[0][1] if scored else None
+
+
 def extract_hex(image_url: str) -> str | None:
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-        }
-        response = requests.get(image_url, timeout=15, headers=headers)
-        response.raise_for_status()
+        response = requests.get(image_url, timeout=10)
+        if response.status_code != 200:
+            return "DELETE"
 
         img = Image.open(BytesIO(response.content)).convert("RGB")
         img = img.resize((100, 100))
 
         pixels = np.array(img).reshape(-1, 3).astype(float)
 
-        # filter near-white pixels (white backgrounds)
+        # filter white background
         white_mask = ~(
             (pixels[:, 0] > 230) &
             (pixels[:, 1] > 230) &
@@ -51,7 +80,7 @@ def extract_hex(image_url: str) -> str | None:
         )
         pixels = pixels[white_mask]
 
-        # filter near-neutral gray pixels (H&M gray background ~#d3d3d3)
+        # filter neutral gray (H&M background)
         gray_mask = ~(
             (pixels[:, 0] > 190) &
             (pixels[:, 1] > 190) &
@@ -65,36 +94,35 @@ def extract_hex(image_url: str) -> str | None:
         if len(pixels) < 20:
             return None
 
-        # weight center pixels more heavily
-        # reshape to 2d grid to identify center region
-        # after filtering we can't do spatial weighting easily
-        # so just use KMeans on remaining pixels
         kmeans = KMeans(n_clusters=5, n_init=5, random_state=42)
         kmeans.fit(pixels)
 
+        # skip largest cluster (likely remaining background)
         counts = np.bincount(kmeans.labels_)
-        dominant = kmeans.cluster_centers_[np.argmax(counts)]
+        sorted_indices = np.argsort(counts)[::-1]
+        
+        # try second largest cluster first if largest is suspiciously neutral
+        dominant_idx = sorted_indices[0]
+        dominant = kmeans.cluster_centers_[dominant_idx]
         r, g, b = [int(x) for x in dominant]
+        
+        # check if dominant is still background-like
+        h, s, l = rgb_to_hsl((r, g, b))
+        if s < 10 and l > 60 and len(sorted_indices) > 1:
+            # fall back to second cluster
+            dominant = kmeans.cluster_centers_[sorted_indices[1]]
+            r, g, b = [int(x) for x in dominant]
+
         return f"#{r:02x}{g:02x}{b:02x}"
 
-    except Exception as e:
+    except Exception:
         return None
 
 
-def assign_palette(hex_color: str) -> str | None:
-    rgb = hex_to_rgb(hex_color)
-    if not rgb:
-        return None
-
-    scored = []
-    for name, palette_hex in PALETTE.items():
-        palette_rgb = hex_to_rgb(palette_hex)
-        if palette_rgb:
-            dist = hsl_color_distance(rgb, palette_rgb)
-            scored.append((dist, name))
-
-    scored.sort(key=lambda x: x[0])
-    return scored[0][1] if scored else None
+def process_product(product_data: tuple) -> tuple:
+    product_id, image_url, old_palette = product_data
+    hex_val = extract_hex(image_url)
+    return product_id, hex_val, old_palette
 
 
 def run():
@@ -104,51 +132,53 @@ def run():
         Product.colour_hex.is_(None)
     ).all()
 
-    print(f"Processing {len(products)} products without extracted hex...")
+    print(f"Processing {len(products)} products...")
+
+    product_data = [
+        (p.id, p.image_url, p.palette_colors)
+        for p in products
+        if p.image_url
+    ]
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {
+            executor.submit(process_product, data): data[0]
+            for data in product_data
+        }
+        completed = 0
+        for future in as_completed(futures):
+            product_id, hex_val, old_palette = future.result()
+            results[product_id] = (hex_val, old_palette)
+            completed += 1
+            if completed % 50 == 0:
+                print(f"  {completed}/{len(product_data)} done...")
 
     success = 0
     failed = 0
+    deleted = 0
     reassigned = 0
 
-    for i, product in enumerate(products):
-        if not product.image_url:
-            db.delete(product)
-            failed += 1
+    for product_id, (hex_val, old_palette) in results.items():
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if not product:
             continue
 
-        # test if image is accessible before processing
-        try:
-            test = requests.head(product.image_url, timeout=5)
-            if test.status_code != 200:
-                print(f"  Deleting product {product.id} — image returned {test.status_code}")
+        if hex_val == "DELETE" or hex_val is None:
+            if hex_val == "DELETE":
                 db.delete(product)
+                deleted += 1
+            else:
                 failed += 1
-                continue
-        except Exception:
-            print(f"  Deleting product {product.id} — image unreachable")
-            db.delete(product)
-            failed += 1
             continue
 
-        hex_val = extract_hex(product.image_url)
-
-        if hex_val:
-            old_palette = product.palette_colors
-            new_palette = assign_palette(hex_val)
-
-            product.colour_hex = hex_val
-            if new_palette:
-                product.palette_colors = new_palette
-                if new_palette != old_palette:
-                    reassigned += 1
-
-            success += 1
-        else:
-            failed += 1
-
-        if (i + 1) % 50 == 0:
-            db.commit()
-            print(f"  [{i+1}/{len(products)}] {success} extracted, {failed} failed, {reassigned} reassigned")
+        new_palette = assign_palette(hex_val)
+        product.colour_hex = hex_val
+        if new_palette:
+            product.palette_colors = new_palette
+            if new_palette != old_palette:
+                reassigned += 1
+        success += 1
 
     db.commit()
     db.close()
@@ -156,6 +186,7 @@ def run():
     print(f"\nDone.")
     print(f"  Extracted: {success}")
     print(f"  Failed: {failed}")
+    print(f"  Deleted (broken images): {deleted}")
     print(f"  Palette reassigned: {reassigned}")
 
 

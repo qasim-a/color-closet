@@ -12,7 +12,6 @@ class ProductOut(BaseModel):
     colour_hex: Optional[str]
     palette_colors: Optional[str]
     image_url: Optional[str]
-    product_url: str
     is_marked_down: bool
 
     class Config:

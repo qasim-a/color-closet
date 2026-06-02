@@ -3,45 +3,30 @@ import type { Product } from '../types/product'
 
 interface Props {
   product: Product
-  labelHex?: string | null
 }
 
-export default function ProductCard({ product, labelHex }: Props) {
+export default function ProductCard({ product }: Props) {
   const [imgError, setImgError] = useState(false)
 
-  const imageUrl = product.image_url
-    ? product.image_url.startsWith('/kaggle-images')
-      ? `${import.meta.env.VITE_API_URL}${product.image_url}`
-      : product.image_url
-    : null
-
-  
-
-  const displayHex = product.colour_hex ?? labelHex
+  const imageUrl = product.image_url || null
 
   return (
-    <a
-      href={product.product_url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="product-card"
-    >
+    <div className="product-card">
       <div className="product-image-container">
         {imageUrl && !imgError ? (
           <img
             src={imageUrl}
             alt={product.name}
             className="product-image"
-            crossOrigin="anonymous"
             onError={() => setImgError(true)}
           />
         ) : (
           <div className="product-image-placeholder" />
         )}
-        {displayHex && (
+        {product.colour_hex && (
           <div
             className="colour-dot"
-            style={{ backgroundColor: displayHex }}
+            style={{ backgroundColor: product.colour_hex }}
           />
         )}
       </div>
@@ -50,6 +35,6 @@ export default function ProductCard({ product, labelHex }: Props) {
         <p className="product-name">{product.name}</p>
         <p className="product-price">{product.price_text}</p>
       </div>
-    </a>
+    </div>
   )
 }

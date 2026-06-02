@@ -14,5 +14,4 @@ class Product(Base):
     colour_hex = Column(String, nullable=True)
     palette_colors = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
-    product_url = Column(String, nullable=False)
     is_marked_down = Column(Boolean, default=False)
