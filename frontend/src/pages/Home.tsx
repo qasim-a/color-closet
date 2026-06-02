@@ -97,7 +97,7 @@ export default function Home() {
           <>
             <p className="caption">
               {selectedHex
-                ? 'Click any item to shop on ASOS'
+                ? 'Pick a color to find matching clothes'
                 : 'Pick a color to find matching clothes'}
             </p>
             <ColorWheel
