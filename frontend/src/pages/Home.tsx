@@ -154,7 +154,7 @@ export default function Home() {
           </div>
           <div className="product-grid">
             {displayed.map(product => (
-              <ProductCard key={product.id} product={product} labelHex={selectedHex} />
+              <ProductCard key={product.id} product={product}  />
             ))}
           </div>
           {hasMore && !isLoading && (
@@ -184,7 +184,7 @@ export default function Home() {
               )}
               <div className="product-grid">
                 {primaryProducts.slice(0, outfitPage1 * PAGE_SIZE).map(product => (
-                  <ProductCard key={product.id} product={product} labelHex={primaryHex} />
+                  <ProductCard key={product.id} product={product}  />
                 ))}
               </div>
               {primaryProducts.slice(0, outfitPage1 * PAGE_SIZE).length < primaryProducts.length && (
@@ -214,7 +214,7 @@ export default function Home() {
               )}
               <div className="product-grid">
                 {secondaryProducts.slice(0, outfitPage2 * PAGE_SIZE).map(product => (
-                  <ProductCard key={product.id} product={product} labelHex={secondaryHex} />
+                  <ProductCard key={product.id} product={product}  />
                 ))}
               </div>
               {secondaryProducts.slice(0, outfitPage2 * PAGE_SIZE).length < secondaryProducts.length && (
