@@ -49,4 +49,4 @@ The palette assignment uses a custom distance function that weights hue 3x more 
 
 ## Data
 
-Product data sourced from the H&M Personalized Fashion Recommendations dataset, enhanced with accessible S3 image URLs by Qdrant. Color extraction and palette assignment were run as a batch process across all 689 products using the pipeline described above.
+Product data sourced from the [H&M Personalized Fashion Recommendations](https://huggingface.co/datasets/Qdrant/hm_ecommerce_products) dataset, enhanced with accessible S3 image URLs by Qdrant. Color extraction and palette assignment were run as a batch process across all 689 products using the pipeline described above.
